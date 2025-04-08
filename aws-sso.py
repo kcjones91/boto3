@@ -158,8 +158,19 @@ def save_aws_profile(account_name, credentials):
     # Instead of using ConfigParser for the config file, we'll write it manually
     # to ensure it matches the expected AWS format
     
-    profile_section = f"[profile {account_name}]"
-    config_content = f"{profile_section}\nregion = us-east-1\noutput = json\n\n"
+    # Define the CA bundle path based on the user's profile
+    username = os.path.basename(os.getenv("USERPROFILE"))
+    ca_bundle_path = f"C:\\Users\\{username}\\.aws\\customer_ca_cert.pem"
+    
+    # Create the section header with just the account name (no "profile" prefix)
+    section_header = f"[{account_name}]"
+    
+    # Create the config content with all required fields
+    config_content = f"{section_header}\n"
+    config_content += f"region = us-east-1\n"
+    config_content += f"output = json\n"
+    config_content += f"sso_start_url = {sso_start_url}\n"
+    config_content += f"ca_bundle = {ca_bundle_path}\n\n"
     
     # Read existing config and append/update our profile
     if os.path.exists(aws_config_path):
@@ -167,13 +178,13 @@ def save_aws_profile(account_name, credentials):
             existing_config = config_file.read()
             
         # Check if profile already exists and update it
-        if profile_section in existing_config:
+        if section_header in existing_config:
             lines = existing_config.split('\n')
             new_lines = []
             skip_section = False
             
             for line in lines:
-                if line == profile_section:
+                if line == section_header:
                     skip_section = True
                     continue
                 elif skip_section and line.startswith('['):
