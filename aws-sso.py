@@ -16,7 +16,6 @@ aws_credentials_path = os.path.join(os.getenv("USERPROFILE"), '.aws', 'credentia
 aws_config_path = os.path.join(os.getenv("USERPROFILE"), '.aws', 'config')
 
 
-
 # Determine the SSO cache directory based on OS
 if platform.system() == "Windows":
     sso_cache_path = os.path.join(os.getenv("USERPROFILE"), ".aws", "sso", "cache")
@@ -37,15 +36,7 @@ def get_sso_access_token():
             [print(f"Reading file: {os.path.join(sso_cache_path, file)}") for file in os.listdir(sso_cache_path) if file.endswith(".json")]
             with open(file_path, "r") as f:
                 cached_data = json.load(f)
-                # Debugging show the file contents
-                # print(f"File contents: {cached_data}")
-
-                # Print the keys in the JSON file for inspection
-                # print(f"Keys in file {file_path}: {cached_data.keys()}")
-                # aT = cached_data.get("accessToken")
-                # print(f"This is the access token: {aT}")
-
-                # Check if the cach belogs to the correct start URL
+                # Check if the cache belongs to the correct start URL
                 if cached_data.get("startUrl") == sso_start_url:
                     access_token = cached_data.get("accessToken")
                     print(f"{access_token}")
@@ -62,7 +53,6 @@ def get_sso_access_token():
 
 # Initialize SSO Client
 sso_client = boto3.client("sso", region_name=sso_region)
-
 
 
 def list_accounts(access_token):
@@ -83,7 +73,7 @@ def list_accounts(access_token):
 
 
 # Get the roles for a specific account
-def list_account_roles(account_id):
+def list_account_roles(account_id, access_token):
     """
     Gathers a list of account roles the user has access to
     """
@@ -111,7 +101,6 @@ def get_role_credentials(account_id, role_name, access_token):
             accountId = account_id,
             accessToken = access_token
         )
-
 
         # Debugging to confirm response structure
         if "roleCredentials" not in response:
@@ -146,14 +135,13 @@ def save_aws_profile(account_name, credentials):
     # Ensure AWS credentials/config directory exists
     aws_dir = os.path.dirname(aws_credentials_path)
     if not os.path.exists(aws_dir):
-        os.mkdirs(aws_dir)
+        os.makedirs(aws_dir)  # Fixed: mkdirs -> makedirs
     
     # Load existing credentials file
     credentials_config = configparser.ConfigParser()
     if os.path.exists(aws_credentials_path):
         credentials_config.read(aws_credentials_path)
 
-    
     # Add/update profile in credentials file
     credentials_config[account_name] = {
         "aws_access_key_id": access_key,
@@ -166,21 +154,43 @@ def save_aws_profile(account_name, credentials):
         credentials_config.write(credentials_file)
     print(f"Profile '{account_name}' saved in credentials file.")
 
-    # Load existing config file
-    aws_config = configparser.ConfigParser()
+    # Fix for AWS config file formatting
+    # Instead of using ConfigParser for the config file, we'll write it manually
+    # to ensure it matches the expected AWS format
+    
+    profile_section = f"[profile {account_name}]"
+    config_content = f"{profile_section}\nregion = us-east-1\noutput = json\n\n"
+    
+    # Read existing config and append/update our profile
     if os.path.exists(aws_config_path):
-        aws_config.read(aws_config_path)
-
-    # Add/update profile in config file
-    profile_section = f"profile {account}"
-    aws_config[profile_section] = {
-        "region": "us-east-1",
-        "output": "json"
-    }
-
-    # Write to .aws/config
-    with open (aws_config_path, "w") as config_file:
-        aws_config.write(config_file)
+        with open(aws_config_path, "r") as config_file:
+            existing_config = config_file.read()
+            
+        # Check if profile already exists and update it
+        if profile_section in existing_config:
+            lines = existing_config.split('\n')
+            new_lines = []
+            skip_section = False
+            
+            for line in lines:
+                if line == profile_section:
+                    skip_section = True
+                    continue
+                elif skip_section and line.startswith('['):
+                    skip_section = False
+                
+                if not skip_section:
+                    new_lines.append(line)
+            
+            existing_config = '\n'.join(new_lines)
+        
+        # Combine with our new profile section
+        config_content = existing_config.rstrip() + "\n\n" + config_content
+    
+    # Write the updated config
+    with open(aws_config_path, "w") as config_file:
+        config_file.write(config_content)
+    
     print(f"Profile '{account_name}' saved in config file")
 
 # Main script
@@ -199,21 +209,16 @@ if __name__ == "__main__":
             print(f"Account ID: {account['accountId']}, Name: {account['accountName']}")
 
             # List Roles from the current account
-            roles = list_account_roles(account["accountId"])
+            roles = list_account_roles(account["accountId"], access_token)  # Fixed: Added missing access_token parameter
             for role in roles:
                 #  print(f" Role: {role['roleName']}")
                 if role["roleName"] == "InfrastructureArchitect":
-                        print(f" Found role 'InfrastructureArchitect' in Account ID: {account['accountId']}")
-                        # Fetch credentials for the role
-                        credentials = get_role_credentials(account['accountId'], role['roleName'], access_token)
-                        if credentials:
-                            # print(f"Credentials for 'InfrastructureArchitect' in Account {account['accountId']}")
-                            # print(f"  AccessKeyID: {credentials['accessKeyId']}")
-                            # print(f"  SecretAccesskey: {credentials['secretAccessKey']}")
-                            # print(f"  SessionToken: {credentials['sessionToken']}")
-                            # print(f"  Expiration: {credentials['expiration']}")
-                            save_aws_profile(account['accountName'], credentials)
-                        else:
-                            print(f"Failed to get credentials for '{account['accountName']}'")
+                    print(f" Found role 'InfrastructureArchitect' in Account ID: {account['accountId']}")
+                    # Fetch credentials for the role
+                    credentials = get_role_credentials(account['accountId'], role['roleName'], access_token)
+                    if credentials:
+                        save_aws_profile(account['accountName'], credentials)
+                    else:
+                        print(f"Failed to get credentials for '{account['accountName']}'")
     except (NoCredentialsError, PartialCredentialsError) as e:
         print("SSO session not found. Run 'aws sso login' first.")
